@@ -1,39 +1,26 @@
 
-
 export class SubscriptionManager {
 	/**
-	 * @param {string} authorizeSubscriptionUrl the url to your backend that authorizes the subscription
-	 * @param {string} subscribeUrl the url to the Exoquic subscribe server. Prefix with dev. for development or prod. for production
+	 * @param {function} fetcher a function that fetches the authorized subscriptiom token from your backend
+	 * @param {string} env the environment to use. "dev" for development or "prod" for production
 	*/
-	constructor(authorizeSubscriptionUrl, subscribeUrl = 'wss://dev.exoquic.com/subscribe') {
-		this.authorizeSubscriptionUrl = authorizeSubscriptionUrl;
-		this.subscribeUrl = subscribeUrl;
+	constructor(fetcher = () => { throw new Error("Missing fetcher function") }, env = "dev") {
+		this.fetcher = fetcher;
+		this.subscribeUrl = env === "prod" ? "https://prod.exoquic.com/subscribe" : "https://dev.exoquic.com/subscribe";
 	}
 
-	async authorizeSubscription(subscriptionData, headers = {}) {
-		const response = await fetch(this.authorizeSubscriptionUrl, {
-			method: 'POST',
-			body: JSON.stringify(subscriptionData),
-			headers,
-		});
+	async authorizeSubscriber(subscriptionData = null) {
+		const authorizationToken = await this.fetcher(subscriptionData);
 
-		if (!response.ok) {
-			throw new Error(`Failed to authorize subscription: ${response.statusText}`);
+		if (!authorizationToken) {
+			throw new Error("Cannot authorize subscriber because fetcher function returned null");
 		}
 
-		const contentType = response.headers.get('content-type');
-		let authorizedSubscription;
-
-		if (contentType.includes('application/json')) {
-			const authorizedSubscriptionWrapper = await response.json();
-			authorizedSubscription = authorizedSubscriptionWrapper.token;
-		} else if (contentType.includes('text/plain')) {
-			authorizedSubscription = await response.text();
-		} else {
-			throw new Error('Invalid content type. Must be application/json or text/plain');
+		if (typeof authorizationToken !== 'string') {
+			throw new Error(`Cannot authorize subscriber because fetcher function returned a non-string value: ${authorizationToken}`);
 		}
 
-		return new AuthorizedSubscription(authorizedSubscription, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl });
+		return new AuthorizedSubscriber(authorizationToken, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl });
 	}
 }
 
@@ -44,9 +31,9 @@ export const DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS = {
 	serverUrl: 'wss://dev.exoquic.com/subscribe',
 };
 
-export class AuthorizedSubscription {
+export class AuthorizedSubscriber {
 	constructor(
-		authorizedSubscription, 
+		authorizationToken, 
 		{ 
 			serverUrl = DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS.serverUrl, 
 			shouldReconnect = DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS.shouldReconnect, 
@@ -54,7 +41,7 @@ export class AuthorizedSubscription {
 			maxReconnectTimeout = DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS.maxReconnectTimeout 
 		}
 	) {
-		this.authorizedSubscription = authorizedSubscription;
+		this.authorizationToken = authorizationToken;
 		this.serverUrl = serverUrl;
 		this.shouldReconnect = shouldReconnect;
 		this.reconnectTimeout = reconnectTimeout;
@@ -71,7 +58,7 @@ export class AuthorizedSubscription {
 
 		this.isSubscribed = true;
 
-		this.ws = new WebSocket(`${this.serverUrl}`, [this.authorizedSubscription]);
+		this.ws = new WebSocket(`${this.serverUrl}`, [this.authorizationToken]);
 
 		this.ws.onmessage = event => {
 				onMessageCallback(event);
