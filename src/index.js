@@ -4,9 +4,9 @@ export class SubscriptionManager {
 	 * @param {function} fetcher a function that fetches the authorized subscriptiom token from your backend
 	 * @param {string} env the environment to use. "dev" for development or "prod" for production
 	*/
-	constructor(fetcher = () => { throw new Error("Missing fetcher function") }, env = "dev") {
+	constructor(fetcher = () => { throw new Error("Missing fetcher function") }, { env = "dev", subscribeUrl = `https://${env}.exoquic.com/subscribe` }) {
 		this.fetcher = fetcher;
-		this.subscribeUrl = env === "prod" ? "https://prod.exoquic.com/subscribe" : "https://dev.exoquic.com/subscribe";
+		this.subscribeUrl = subscribeUrl;
 	}
 
 	async authorizeSubscriber(subscriptionData = null) {
