@@ -90,7 +90,7 @@ export class AuthorizedSubscriber {
 
 	unsubscribe() {
 		this.isSubscribed = false;
-		this.ws.close();
+		this.ws.close(1000, "unsubscribe");
 	}
 
 }
