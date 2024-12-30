@@ -1,6 +1,6 @@
 {
   "name": "@exoquic/sub",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Exoquic subscriber API",
   "main": "src/index.js",
   "scripts": {
