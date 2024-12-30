@@ -55,7 +55,11 @@ export class AuthorizedSubscriber {
 		this.isConnected = false;
 	}
 
-	subscribe(onMessageCallback) {
+	/**
+	 * @param {function} onMessageCallback a function that is called when a new event batch is received
+	 * @returns {AuthorizedSubscriber} the authorized subscriber
+	*/
+	subscribe(onEventBatchReceivedCallback) {
 		if (this.isSubscribed) {
 			return;
 		}
@@ -64,8 +68,8 @@ export class AuthorizedSubscriber {
 
 		this.ws = new WebSocket(`${this.serverUrl}`, [this.authorizationToken]);
 
-		this.ws.onmessage = event => {
-				onMessageCallback(event);
+		this.ws.onmessage = eventBatch => {
+			onEventBatchReceivedCallback(eventBatch);
 		};
 
 		this.ws.onopen = () => {
@@ -80,7 +84,7 @@ export class AuthorizedSubscriber {
 			if (this.shouldReconnect && !isCleanClose) {
 				setTimeout(() => {
 					this.reconnectTimeout = Math.min(this.reconnectTimeout * 1.5, this.maxReconnectTimeout);
-					this.subscribe(onMessageCallback);
+					this.subscribe(onEventBatchReceivedCallback);
 				}, this.reconnectTimeout);
 			}
 		};
