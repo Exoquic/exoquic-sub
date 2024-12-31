@@ -68,8 +68,9 @@ export class AuthorizedSubscriber {
 
 		this.ws = new WebSocket(`${this.serverUrl}`, [this.authorizationToken]);
 
-		this.ws.onmessage = eventBatch => {
-			onEventBatchReceivedCallback(eventBatch);
+		this.ws.onmessage = eventBatchRawJson => {
+			const parsedEventBatch = JSON.parse(eventBatchRawJson.data);
+			onEventBatchReceivedCallback(parsedEventBatch);
 		};
 
 		this.ws.onopen = () => {
