@@ -23,7 +23,7 @@ export class SubscriptionManager {
 		if (!this.cacheEnabled) {
 			const subscriptionToken = await this.fetcher(subscriptionData);
 			const decodedToken = jwtDecode(subscriptionToken);
-			return new AuthorizedSubscriber(subscriptionToken, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl }, null, this.fetcherFunc, this.cacheEnabled, decodedToken);
+			return new AuthorizedSubscriber(subscriptionToken, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl }, null, this.fetcherFunc, this.cacheEnabled, decodedToken, this.name);
 		}
 
 		const cachedSubscriptionToken = localStorage.getItem(`${this.name}.${JSON.stringify(subscriptionData)}`);
@@ -52,7 +52,7 @@ export class SubscriptionManager {
 			throw new Error(`Cannot authorize subscriber because fetcher function returned a non-string value: ${subscriptionToken}`);
 		}
 
-		return new AuthorizedSubscriber(subscriptionToken, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl }, null, this.fetcherFunc, this.cacheEnabled, decodedToken);
+		return new AuthorizedSubscriber(subscriptionToken, { ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl }, null, this.fetcherFunc, this.cacheEnabled, decodedToken, this.name);
 	}
 }
 
@@ -75,7 +75,8 @@ export class AuthorizedSubscriber {
 		db,
 		fetcherFunc,
 		cacheEnabled,
-		decodedToken
+		decodedToken,
+		name
 	) {
 		this.authorizationToken = authorizationToken;
 		this.serverUrl = serverUrl;
@@ -89,6 +90,7 @@ export class AuthorizedSubscriber {
 		this.fetcherFunc = fetcherFunc;
 		this.cacheEnabled = cacheEnabled;
 		this.decodedToken = decodedToken;
+		this.name = name;
 	}
 
 	/**
@@ -153,8 +155,8 @@ export class AuthorizedSubscriber {
 
 				this.db = await openDB(this.name, 1, {
 					upgrade(db) {
-						if (!db.objectStoreNames.includes(storeName)) {
-							db.createObjectStore(storeName);
+						if (!db.objectStoreNames.contains(storeName)) {
+							db.createObjectStore(storeName, { autoIncrement: true });
 						}
 					}
 				});
@@ -168,6 +170,7 @@ export class AuthorizedSubscriber {
 				this.ws.onmessage = eventBatchRawJson => {
 					const parsedEventBatch = JSON.parse(eventBatchRawJson.data);
 					onEventBatchReceivedCallback(parsedEventBatch);
+					this.db.transaction(storeName, 'readwrite').objectStore(storeName).add(parsedEventBatch);
 				};
 		
 				this.ws.onopen = () => {
