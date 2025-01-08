@@ -34,8 +34,8 @@ export class SubscriptionManager {
 		})(this.name, this.cacheEnabled);
 	}
 
-	async authorizeSubscriber(subscriptionData = null) {
-		if (!this.cacheEnabled) {
+	async authorizeSubscriber(subscriptionData = null, cacheEnabled = this.cacheEnabled) {
+		if (!this.cacheEnabled || !cacheEnabled) {
 			const subscriptionToken = await this.fetcher(subscriptionData);
 			const decodedToken = jwtDecode(subscriptionToken);
 			return new AuthorizedSubscriber(
@@ -51,26 +51,32 @@ export class SubscriptionManager {
 
 		let subscriptionToken;
 
-		const cachedSubscriptionToken = await this.db.get("subscriptionTokens", "0");
+		let subscriberKey = JSON.stringify(subscriptionData);
+		
+		const cachedSubscriptionToken = await this.db.get("subscriptionTokens", subscriberKey);
+		
 		if (!cachedSubscriptionToken) {
+			// Cache subscriptionToken if it isn't cached
 			subscriptionToken = await this.fetcher(subscriptionData);
-			await this.db.put("subscriptionTokens", subscriptionToken, "0");
+			await this.db.put("subscriptionTokens", subscriptionToken, subscriberKey);
 		} else {
+			// Use the cached subscription token
 			subscriptionToken = cachedSubscriptionToken;
 		}
-		
+
 		let decodedToken = jwtDecode(subscriptionToken);
 		let subscribersMetadata = await this.db.getAll("subscribersMetadata");
 
 		if (decodedToken.exp < Math.floor(Date.now() / 1000)) {
+			// If the token is expired, fetch a new one and update the cache.
 			subscriptionToken = await this.fetcher(subscriptionData);
-			await this.db.put("subscriptionTokens", subscriptionToken, "0");
+			await this.db.put("subscriptionTokens", subscriptionToken, subscriberKey);
 
 			// Clear all the cached subscriber data.
-			for (const subscriberMetadata of subscribersMetadata) {
-				const subscriberDbName = subscriberMetadata.name;
-				const subscriberDb = await openDB(subscriberDbName, 1);
-				await subscriberDb.clear(subscriberDbName);
+			const subscriberMetadata = subscribersMetadata.find(subscriberMetadata => subscriberMetadata.name === subscriberKey);
+			if (subscriberMetadata) {
+				const subscriberDb = await openDB(subscriberMetadata.name, 1);
+				await subscriberDb.clear(subscriberMetadata.name);
 				subscriberDb.close();
 			}
 
@@ -85,10 +91,11 @@ export class SubscriptionManager {
 			throw new Error(`Cannot authorize subscriber because fetcher function returned a non-string value: ${subscriptionToken}`);
 		}
 
-		let subscriberMetadata = subscribersMetadata.find(subscriberMetadata => subscriberMetadata.name === JSON.stringify(subscriptionData));
+		let subscriberMetadata = subscribersMetadata.find(subscriberMetadata => subscriberMetadata.name === subscriberKey);
 
 		if (!subscriberMetadata) {
-			subscriberMetadata = { name: JSON.stringify(subscriptionData) }
+			// Cache subscriber metadata if it isn't cached
+			subscriberMetadata = { name: subscriberKey }
 			await this.db.put("subscribersMetadata", subscriberMetadata);
 		}
 
