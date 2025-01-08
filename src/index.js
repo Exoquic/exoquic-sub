@@ -7,7 +7,7 @@ export class SubscriptionManager {
 	 * @param {string} env the environment to use. "dev" for development or "prod" for production
 	 * @param {string} name the name of the subscription manager. An IndexedDB database will be created with this name.
 	*/
-	constructor(fetcher = () => { throw new Error("Missing fetcher function") }, { env = "dev", subscribeUrl, name = "default", cacheEnabled = true, cachedSubscribers = [] }) {
+	constructor(fetcher = () => { throw new Error("Missing fetcher function") }, { env = "dev", subscribeUrl, name = "default", cacheEnabled = true }) {
 		this.fetcher = fetcher;
 		if (!subscribeUrl) {
 			this.subscribeUrl = `https://${env}.exoquic.com/subscribe`
@@ -17,27 +17,9 @@ export class SubscriptionManager {
 
 		this.cacheEnabled = cacheEnabled;
 		this.name = name;
-		this.cachedSubscribers = cachedSubscribers ?? [];
-
 		this.db = null;
-		if (this.cacheEnabled && this.cachedSubscribers.length == 0) {
-			console.warn("Caching is enabled but provided no subscribers to cache. Will ignore caching for all subscribers.");
-		}
 
-
-		(async (cachedSubscribers, name, cacheEnabled) => {
-			// Delete database if cached subscribers and provided cached subscribers are different.
-			if (this.cachedSubscribers.length > 0) {
-				const dbExists = (await indexedDB.databases()).map(db => db.name).includes(name);
-				if (dbExists) {
-					this.db = await openDB(name, 1);
-					const subscribers = await this.db.get("subscribers", "0");
-					if (subscribers !== JSON.stringify(cachedSubscribers)) {
-						await deleteDB(name);
-					}
-				}
-			}
-
+		(async (name, cacheEnabled) => {
 			if (cacheEnabled) {
 				this.db = await openDB(name, 1, {
 					upgrade(db) {
@@ -45,28 +27,15 @@ export class SubscriptionManager {
 						db.createObjectStore("subscriptionTokens", { autoIncrement: true });
 
 						// Table for storing subscribers.
-						db.createObjectStore("subscribers", { autoIncrement: true });
-						// Create a table for each subscriber where the event batches are stored.
-						for (const subscriber of cachedSubscribers) {
-							if (!subscriber.name) {
-								throw new Error(`Cached subscriber ${subscriber} is missing a name.`);
-							}
-
-							db.createObjectStore(subscriber.name, { autoIncrement: true });
-						}
+						db.createObjectStore("subscribersMetadata", { autoIncrement: true });
 					}
 				});
-				this.db.put("subscribers", JSON.stringify(cachedSubscribers), "0");
 			}
-		})(this.cachedSubscribers, this.name, this.cacheEnabled);
+		})(this.name, this.cacheEnabled);
 	}
 
-	async authorizeSubscriber(subscriberName = null, subscriptionData = null) {
-		if (this.cachedSubscribers && subscriberName == null) {
-			console.warn(`Missing subscriber name. Will ignore caching for subscriber.`);
-		}
-
-		if (!this.cacheEnabled || subscriberName == null) {
+	async authorizeSubscriber(subscriptionData = null) {
+		if (!this.cacheEnabled) {
 			const subscriptionToken = await this.fetcher(subscriptionData);
 			const decodedToken = jwtDecode(subscriptionToken);
 			return new AuthorizedSubscriber(
@@ -76,8 +45,7 @@ export class SubscriptionManager {
 				this.fetcher, 
 				this.cacheEnabled, 
 				decodedToken, 
-				this.name, 
-				subscriberName
+				this.name
 			);
 		}
 
@@ -92,13 +60,20 @@ export class SubscriptionManager {
 		}
 		
 		let decodedToken = jwtDecode(subscriptionToken);
+		let subscribersMetadata = await this.db.getAll("subscribersMetadata");
 
 		if (decodedToken.exp < Math.floor(Date.now() / 1000)) {
 			subscriptionToken = await this.fetcher(subscriptionData);
 			await this.db.put("subscriptionTokens", subscriptionToken, "0");
-			for (const subscriber of this.cachedSubscribers) {
-				await this.db.clear(subscriber.name);
+
+			// Clear all the cached subscriber data.
+			for (const subscriberMetadata of subscribersMetadata) {
+				const subscriberDbName = subscriberMetadata.name;
+				const subscriberDb = await openDB(subscriberDbName, 1);
+				await subscriberDb.clear(subscriberDbName);
+				subscriberDb.close();
 			}
+
 			decodedToken = jwtDecode(subscriptionToken);
 		}
 
@@ -110,14 +85,21 @@ export class SubscriptionManager {
 			throw new Error(`Cannot authorize subscriber because fetcher function returned a non-string value: ${subscriptionToken}`);
 		}
 
+		let subscriberMetadata = subscribersMetadata.find(subscriberMetadata => subscriberMetadata.name === JSON.stringify(subscriptionData));
+
+		if (!subscriberMetadata) {
+			subscriberMetadata = { name: JSON.stringify(subscriptionData) }
+			await this.db.put("subscribersMetadata", subscriberMetadata);
+		}
+
 		return new AuthorizedSubscriber(subscriptionToken, 
 			{ ...DEFAULT_AUTHORIZED_SUBSCRIPTION_SETTINGS, serverUrl: this.subscribeUrl }, 
 			this.db, 
-			this.fetcherFunc, 
+			this.fetcher, 
 			this.cacheEnabled, 
 			decodedToken, 
 			this.name,
-			subscriberName
+			subscriberMetadata
 		);
 	}
 }
@@ -143,7 +125,7 @@ export class AuthorizedSubscriber {
 		cacheEnabled,
 		decodedToken,
 		subscriptionManagerName,
-		subscriberName
+		subscriberMetadata
 	) {
 		this.authorizationToken = authorizationToken;
 		this.serverUrl = serverUrl;
@@ -158,7 +140,7 @@ export class AuthorizedSubscriber {
 		this.cacheEnabled = cacheEnabled;
 		this.decodedToken = decodedToken;
 		this.name = subscriptionManagerName;
-		this.subscriberName = subscriberName;
+		this.subscriberMetadata = subscriberMetadata;
 	}
 
 	/**
@@ -174,13 +156,15 @@ export class AuthorizedSubscriber {
 
 		this.isSubscribed = true;
 
-		if (this.cacheEnabled && this.subscriberName) {
-			// Check if the store exists. If not, then retrieve the events from exoquic.
-			const storeExists = this.db.objectStoreNames.contains(this.subscriberName);
-			if (storeExists) {
+		if (this.cacheEnabled) {
 				(async () => {
-
-					const events = await (this.db.transaction(this.subscriberName, 'readwrite').objectStore(this.subscriberName).getAll());
+					const subscriberDb = await openDB(this.subscriberMetadata.name, 1, {
+						upgrade(db) {
+							db.createObjectStore(db.name, { autoIncrement: true });
+						}
+					});
+				
+					const events = await (subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).getAll());
 					events.forEach(eventBatch => {
 						onEventBatchReceivedCallback(eventBatch);
 					});
@@ -188,7 +172,7 @@ export class AuthorizedSubscriber {
 					this.ws.onmessage = eventBatchRawJson => {
 						const parsedEventBatch = JSON.parse(eventBatchRawJson.data);
 						onEventBatchReceivedCallback(parsedEventBatch);
-						this.db.transaction(this.subscriberName, 'readwrite').objectStore(this.subscriberName).add(parsedEventBatch);
+						subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).add(parsedEventBatch);
 					};
 			
 					this.ws.onopen = () => {
@@ -206,6 +190,10 @@ export class AuthorizedSubscriber {
 								this.subscribe(onEventBatchReceivedCallback);
 							}, this.reconnectTimeout);
 						}
+
+						if (!this.shouldReconnect) {
+							subscriberDb.close();
+						}
 					};
 			
 					this.ws.onerror = (error) => {
@@ -214,7 +202,6 @@ export class AuthorizedSubscriber {
 	
 					
 				})();
-			}
 		} else {
 
 			this.ws.onmessage = eventBatchRawJson => {
