@@ -178,6 +178,9 @@ export class AuthorizedSubscriber {
 
 					this.ws.onmessage = eventBatchRawJson => {
 						const parsedEventBatch = JSON.parse(eventBatchRawJson.data);
+						if (parsedEventBatch.length <= 0) {
+							return;
+						}
 						onEventBatchReceivedCallback(parsedEventBatch);
 						subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).add(parsedEventBatch);
 					};
