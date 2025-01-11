@@ -20,6 +20,12 @@ export class SubscriptionManager {
 		this.name = name;
 		this.db = null;
 
+		this.tabId = v4();
+		window.addEventListener("focus", () => {
+			localStorage.setItem(`${this.name}-tabId`, this.tabId);
+		});
+
+
 		(async (name, cacheEnabled) => {
 			if (cacheEnabled) {
 				this.db = await openDB(name, 1, {
@@ -46,7 +52,9 @@ export class SubscriptionManager {
 				this.fetcher, 
 				this.cacheEnabled, 
 				decodedToken, 
-				this.name
+				this.name,
+				null,
+				this.tabId
 			);
 		}
 
@@ -107,7 +115,8 @@ export class SubscriptionManager {
 			this.cacheEnabled, 
 			decodedToken, 
 			this.name,
-			subscriberMetadata
+			subscriberMetadata,
+			this.tabId
 		);
 	}
 }
@@ -133,7 +142,8 @@ export class AuthorizedSubscriber {
 		cacheEnabled,
 		decodedToken,
 		subscriptionManagerName,
-		subscriberMetadata
+		subscriberMetadata,
+		tabId
 	) {
 		this.authorizationToken = authorizationToken;
 		this.serverUrl = serverUrl;
@@ -149,10 +159,7 @@ export class AuthorizedSubscriber {
 		this.decodedToken = decodedToken;
 		this.name = subscriptionManagerName;
 		this.subscriberMetadata = subscriberMetadata;
-		this.tabId = v4();
-		window.addEventListener("focus", () => {
-			localStorage.setItem("tabId", this.tabId);
-		});
+		this.tabId = tabId;
 	}
 
 	/**
@@ -176,7 +183,7 @@ export class AuthorizedSubscriber {
 						}
 					});
 
-					localStorage.setItem("tabId", this.tabId);
+					localStorage.setItem(`${this.name}-tabId`, this.tabId);
 				
 					const events = await (subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).getAll());
 					events.forEach(eventBatch => {
@@ -189,8 +196,10 @@ export class AuthorizedSubscriber {
 							return;
 						}
 						onEventBatchReceivedCallback(parsedEventBatch);
-						if (localStorage.getItem("tabId") === this.tabId) {
+						if (localStorage.getItem(`${this.name}-tabId`) == this.tabId) {
+							console.log(`[${this.subscriberMetadata.name}] storing ${parsedEventBatch}`);
 							subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).add(parsedEventBatch);
+							console.log(`[${this.subscriberMetadata.name}] stored ${parsedEventBatch}`);
 						}
 					};
 			
