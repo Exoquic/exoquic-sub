@@ -150,6 +150,9 @@ export class AuthorizedSubscriber {
 		this.name = subscriptionManagerName;
 		this.subscriberMetadata = subscriberMetadata;
 		this.tabId = v4();
+		window.addEventListener("focus", () => {
+			localStorage.setItem("tabId", this.tabId);
+		});
 	}
 
 	/**
