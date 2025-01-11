@@ -1,5 +1,6 @@
 import { deleteDB, openDB } from "idb";
 import { jwtDecode } from "jwt-decode";
+import { v4 } from "uuid";
 
 export class SubscriptionManager {
 	/**
@@ -148,6 +149,7 @@ export class AuthorizedSubscriber {
 		this.decodedToken = decodedToken;
 		this.name = subscriptionManagerName;
 		this.subscriberMetadata = subscriberMetadata;
+		this.tabId = v4();
 	}
 
 	/**
@@ -170,6 +172,8 @@ export class AuthorizedSubscriber {
 							db.createObjectStore(db.name, { autoIncrement: true });
 						}
 					});
+
+					localStorage.setItem("tabId", this.tabId);
 				
 					const events = await (subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).getAll());
 					events.forEach(eventBatch => {
@@ -182,7 +186,9 @@ export class AuthorizedSubscriber {
 							return;
 						}
 						onEventBatchReceivedCallback(parsedEventBatch);
-						subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).add(parsedEventBatch);
+						if (localStorage.getItem("tabId") === this.tabId) {
+							subscriberDb.transaction(this.subscriberMetadata.name, 'readwrite').objectStore(this.subscriberMetadata.name).add(parsedEventBatch);
+						}
 					};
 			
 					this.ws.onopen = () => {
