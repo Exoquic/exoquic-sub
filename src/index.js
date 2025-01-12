@@ -21,10 +21,11 @@ export class SubscriptionManager {
 		this.db = null;
 
 		this.tabId = v4();
-		window.addEventListener("focus", () => {
-			localStorage.setItem(`${this.name}-tabId`, this.tabId);
-		});
-
+		if (typeof window !== "undefined") {
+			window.addEventListener("focus", () => {
+				localStorage.setItem(`${this.name}-tabId`, this.tabId);
+			});	
+		}
 
 		(async (name, cacheEnabled) => {
 			if (cacheEnabled) {
